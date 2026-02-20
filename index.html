@@ -30,7 +30,7 @@ input{
 <div id="log"></div>
 
 <script>
-const MAIN_TXT = "/main/main.txt";
+const MAIN_TXT = "/awa/main/main.txt";
 const logEl = document.getElementById("log");
 function log(s){ logEl.textContent += (logEl.textContent ? "\n" : "") + s; }
 
@@ -53,7 +53,7 @@ function normalizePassword(raw){
 async function ensureSW(){
   if (!("serviceWorker" in navigator)) throw new Error("ServiceWorker 不可用");
 
-  await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+  await navigator.serviceWorker.register("/awa/sw.js", { scope: "/awa/" });
   await navigator.serviceWorker.ready;
 
   // 确保 controller 生效（首次安装需要刷新一次）
@@ -96,7 +96,7 @@ function ensureBase(doc, dir){
     base = doc.createElement("base");
     doc.head.prepend(base);
   }
-  base.setAttribute("href", `/main/${dir}/`);
+  base.setAttribute("href", `/awa/main/${dir}/`);
 }
 
 async function unlock(raw){
@@ -113,7 +113,7 @@ async function unlock(raw){
   const dirs = await fetchDirs();
 
   for (const dir of dirs){
-    const indexPath = `/main/${encodeURIComponent(dir)}/index.html`;
+    const indexPath = `/awa/main/${encodeURIComponent(dir)}/index.html`;
     log("try " + indexPath);
 
     try{

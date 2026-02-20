@@ -36,7 +36,7 @@ self.addEventListener("message", (e) => {
 });
 
 async function decryptZipBlobToResponse(pathname, zipBlob) {
-  const baseName = pathname.substring(pathname.lastIndexOf("/") + 1);
+  const baseName = pathname.substring(pathname.lastIndexOf("/awa/") + 1);
 
   const reader = new zip.ZipReader(new zip.BlobReader(zipBlob), { password: PW });
   const entries = await reader.getEntries();
@@ -47,7 +47,7 @@ async function decryptZipBlobToResponse(pathname, zipBlob) {
   }
 
   // 优先同名 entry，否则取第一个文件 entry
-  let entry = entries.find(e => !e.directory && (e.filename === baseName || e.filename.endsWith("/" + baseName)));
+  let entry = entries.find(e => !e.directory && (e.filename === baseName || e.filename.endsWith("/awa/" + baseName)));
   if (!entry) entry = entries.find(e => !e.directory);
   if (!entry) {
     await reader.close();
@@ -72,8 +72,8 @@ self.addEventListener("fetch", (event) => {
 
   // 只处理同源 /main/**（但放行 main.txt）
   if (url.origin !== self.location.origin) return;
-  if (!url.pathname.startsWith("/main/")) return;
-  if (url.pathname === "/main/main.txt") return;
+  if (!url.pathname.startsWith("/awa/main/")) return;
+  if (url.pathname === "/awa/main/main.txt") return;
 
   event.respondWith((async () => {
     // 未设置密码：直接放行
