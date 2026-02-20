@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unlock</title>
+<style>
+:root { color-scheme: dark; }
+body{
+  margin:0;height:100vh;display:flex;justify-content:center;align-items:center;
+  background:#0b0f14;font-family:system-ui;
+}
+input{
+  width:320px;padding:14px;border-radius:12px;
+  border:1px solid rgba(255,255,255,0.1);
+  background:#11161d;color:#fff;font-size:16px;
+}
+#log{
+  position:fixed;left:0;right:0;bottom:0;
+  max-height:40vh;overflow:auto;
+  padding:10px 12px;font-size:12px;line-height:1.4;
+  color:rgba(255,255,255,.7);background:rgba(0,0,0,.35);
+  white-space:pre-wrap;word-break:break-word;
+}
+</style>
+</head>
+<body>
+
+<input id="pw" type="password" placeholder="请输入密码" autocomplete="off">
+<div id="log"></div>
+
+<script>
+const MAIN_TXT = "/main/main.txt";
+const logEl = document.getElementById("log");
+function log(s){ logEl.textContent += (logEl.textContent ? "\n" : "") + s; }
+
+// Python 同款：按 UTF-16 code unit 生成 \uXXXX 字面串
+function toUnicodeEscapedPassword(str){
+  let out="";
+  for(let i=0;i<str.length;i++){
+    out += "\\u" + str.charCodeAt(i).toString(16).padStart(4,"0");
+  }
+  return out;
+}
+
+// 避免二次转义：只要包含 "\u" 就认为已经是最终形式
+function normalizePassword(raw){
+  const s = (raw||"").trim();
+  if (s.includes("\\u")) return s;
+  return toUnicodeEscapedPassword(s);
+}
+
+async function ensureSW(){
+  if (!("serviceWorker" in navigator)) throw new Error("ServiceWorker 不可用");
+
+  await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+  await navigator.serviceWorker.ready;
+
+  // 确保 controller 生效（首次安装需要刷新一次）
+  if (!navigator.serviceWorker.controller) {
+    location.reload();
+    return new Promise(()=>{});
+  }
+}
+
+async function setPasswordToSW(pw){
+  const ch = new MessageChannel();
+  const ack = new Promise((res, rej) => {
+    ch.port1.onmessage = (e) => (e.data && e.data.ok) ? res(true) : rej(new Error("ACK failed"));
+  });
+  navigator.serviceWorker.controller.postMessage({ type:"SET_PASSWORD", password: pw }, [ch.port2]);
+  return ack;
+}
+
+async function fetchDirs(){
+  const r = await fetch(MAIN_TXT, { cache:"no-store" });
+  const t = await r.text();
+  return t.split(/\r?\n/)
+    .map(s=>s.trim())
+    .filter(s=>s.length>0 && !s.startsWith("#"))
+    .map(s=>s.replace(/^\/+/,"").replace(/^main\//i,"").replace(/\/+$/,""));
+}
+
+// 用 SW 解密后的 fetch 来验证并拿到真实 HTML
+async function fetchDecryptedHTML(path){
+  const r = await fetch(path, { cache:"no-store" });
+  const text = await r.text();
+  const t = text.trimStart();
+  if (t.startsWith("<!DOCTYPE") || t.startsWith("<!doctype") || t.startsWith("<html")) return text;
+  throw new Error("not html (maybe decrypt failed)");
+}
+
+function ensureBase(doc, dir){
+  let base = doc.querySelector("base");
+  if (!base) {
+    base = doc.createElement("base");
+    doc.head.prepend(base);
+  }
+  base.setAttribute("href", `/main/${dir}/`);
+}
+
+async function unlock(raw){
+  logEl.textContent = "";
+  await ensureSW();
+
+  const pw = normalizePassword(raw);
+  log("PW_NORMALIZED=" + pw);
+
+  // 关键：等 SW ACK 后再开始任何资源相关操作
+  await setPasswordToSW(pw);
+  log("SW password ACK OK");
+
+  const dirs = await fetchDirs();
+
+  for (const dir of dirs){
+    const indexPath = `/main/${encodeURIComponent(dir)}/index.html`;
+    log("try " + indexPath);
+
+    try{
+      const html = await fetchDecryptedHTML(indexPath);
+      log("index decrypt OK: " + dir);
+
+      // 不“跳转”，但把地址改成真实目录，保证相对路径解析到 /main/<dir>/
+      history.replaceState(null, "", indexPath);
+
+      // 在写入前补 base，确保资源相对路径正确
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, "text/html");
+      ensureBase(doc, dir);
+
+      document.open();
+      document.write("<!DOCTYPE html>\n" + doc.documentElement.outerHTML);
+      document.close();
+
+      return;
+    }catch(e){
+      // continue
+    }
+  }
+
+  alert("密码错误");
+}
+
+document.getElementById("pw").addEventListener("keydown", (e)=>{
+  if (e.key === "Enter"){
+    const v = e.target.value.trim();
+    if (!v) return;
+    unlock(v);
+  }
+});
+</script>
+
+</body>
+</html>
