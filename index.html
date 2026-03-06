@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>awa</title>
+<style>
+body{
+margin:0;
+height:100vh;
+display:flex;
+align-items:center;
+justify-content:center;
+background:#0b0f14;
+font-family:sans-serif
+}
+input,button{
+padding:10px;
+font-size:14px;
+border-radius:6px;
+border:1px solid #333;
+background:#111;
+color:#eee
+}
+button{cursor:pointer}
+</style>
+</head>
+<body>
+
+<input id="pwd" type="password">
+<button id="go">OK</button>
+
+<script>
+const $=id=>document.getElementById(id)
+
+function toUnicodeEscape(s){
+let o=""
+for(const c of s)o+="\\u"+c.codePointAt(0).toString(16).padStart(4,"0")
+return o
+}
+
+async function registerSW(){
+const r=await navigator.serviceWorker.register("./sw.js",{scope:"./"})
+await navigator.serviceWorker.ready
+return r
+}
+
+async function setPassword(p){
+function post(){
+const c=navigator.serviceWorker.controller
+if(!c)return false
+c.postMessage({type:"SET_PASSWORD",password:p})
+return true
+}
+if(post())return
+await new Promise(r=>{
+navigator.serviceWorker.addEventListener("controllerchange",r,{once:true})
+})
+post()
+}
+
+function isHTML(t){
+t=t.slice(0,800).toLowerCase()
+return t.includes("<html")||t.includes("<!doctype")
+}
+
+async function fetchList(){
+const r=await fetch("./main/main.txt",{cache:"no-store"})
+return (await r.text()).split(/\r?\n/).map(s=>s.trim()).filter(Boolean)
+}
+
+async function unlock(p){
+await registerSW()
+await setPassword(p)
+const dirs=await fetchList()
+for(const d of dirs){
+const u="./main/"+encodeURIComponent(d)+"/index.html"
+try{
+const r=await fetch(u,{cache:"no-store"})
+if(!r.ok)continue
+const t=await r.text()
+if(!isHTML(t))continue
+location.href=u
+return
+}catch{}
+}
+}
+
+async function go(){
+const v=$("pwd").value
+if(!v)return
+await unlock(toUnicodeEscape(v))
+}
+
+$("go").onclick=go
+$("pwd").onkeydown=e=>{if(e.key==="Enter")go()}
+</script>
+
+</body>
+</html>
