@@ -11,12 +11,12 @@ button{cursor:pointer}
 </style>
 </head>
 <body>
-
-<input id="pwd" type="password">
+<input id="pwd" type="text">
 <button id="go">OK</button>
-
 <script>
 const $=id=>document.getElementById(id)
+const log=(...a)=>console.log("[awa]",...a)
+const MAP_KEY="pwd_dir_map"
 
 function toUnicodeEscape(s){
 let o=""
@@ -24,28 +24,66 @@ for(const c of s)o+="\\u"+c.codePointAt(0).toString(16).padStart(4,"0")
 return o
 }
 
+function getDirMap(){
+try{return JSON.parse(localStorage.getItem(MAP_KEY)||"{}")}catch{return{}}
+}
+
+function setDirMap(m){
+localStorage.setItem(MAP_KEY,JSON.stringify(m))
+}
+
+function bindDirPwd(dir,pwd){
+const m=getDirMap()
+m[dir]=pwd
+setDirMap(m)
+log("bindDirPwd",dir,pwd)
+}
+
+function getDirPwd(dir){
+return getDirMap()[dir]||""
+}
+
 async function registerSW(){
+log("registerSW:start")
 const r=await navigator.serviceWorker.register("./sw.js",{scope:"./"})
 await navigator.serviceWorker.ready
+log("registerSW:ready",!!navigator.serviceWorker.controller)
 return r
 }
 
-function waitSWReady(){
-return new Promise(r=>{
-if(window.__sw_ready)return r()
-navigator.serviceWorker.addEventListener("message",e=>{
-if(e.data&&e.data.type==="SW_READY"){
-window.__sw_ready=1
-r()
+async function ensureController(){
+if(navigator.serviceWorker.controller){
+log("ensureController:already")
+return
 }
-},{once:true})
+log("ensureController:wait")
+await new Promise(r=>navigator.serviceWorker.addEventListener("controllerchange",()=>{log("controllerchange");r()},{once:true}))
+}
+
+async function pingSW(){
+await registerSW()
+await ensureController()
+log("pingSW:send")
+await new Promise((resolve,reject)=>{
+const t=setTimeout(()=>reject(new Error("ping timeout")),5000)
+const onMsg=e=>{
+if(e.data&&e.data.type==="SW_READY"){
+clearTimeout(t)
+navigator.serviceWorker.removeEventListener("message",onMsg)
+log("pingSW:ready")
+resolve()
+}
+}
+navigator.serviceWorker.addEventListener("message",onMsg)
+navigator.serviceWorker.controller.postMessage({type:"PING"})
 })
 }
 
 async function setPasswords(list){
-await registerSW()
-await waitSWReady()
-navigator.serviceWorker.controller.postMessage({type:"SET_PASSWORDS",passwords:list})
+await pingSW()
+const uniq=[...new Set(list.filter(Boolean))]
+log("setPasswords",uniq)
+navigator.serviceWorker.controller.postMessage({type:"SET_PASSWORDS",passwords:uniq})
 }
 
 function isHTML(t){
@@ -54,17 +92,12 @@ return t.includes("<html")||t.includes("<!doctype")
 }
 
 async function fetchList(){
+log("fetchList:start")
 const r=await fetch("./main/main.txt",{cache:"no-store"})
-return (await r.text()).split(/\r?\n/).map(s=>s.trim()).filter(Boolean)
-}
-
-function getSaved(){
-try{return JSON.parse(localStorage.getItem("pwds")||"[]")}catch{return[]}
-}
-
-function savePwd(p){
-let a=getSaved()
-if(!a.includes(p)){a.push(p);localStorage.setItem("pwds",JSON.stringify(a))}
+const t=await r.text()
+const list=t.split(/\r?\n/).map(s=>s.trim()).filter(Boolean)
+log("fetchList:done",list)
+return list
 }
 
 function splitPath(p){
@@ -74,44 +107,116 @@ if(i===-1)return{path:p,query:""}
 return{path:p.slice(0,i),query:p.slice(i)}
 }
 
-async function tryOpen(p,fullPath,hash){
-await setPasswords([p,...getSaved().filter(x=>x!==p)])
-const dirs=await fetchList()
-const {path,query}=splitPath(fullPath||"")
-for(const d of dirs){
-const base="./main/"+encodeURIComponent(d)+"/"
-const u=path?base+path+query:base+"index.html"
-try{
+function normalizePath(p){
+if(!p)return""
+return p.replace(/^\/+/,"")
+}
+
+function parseInput(v){
+if(!v)return null
+if(v.startsWith("?")){
+const q=new URLSearchParams(v.slice(1))
+return{
+pwd:q.get("pwd")||"",
+path:normalizePath(q.get("path")||q.get("url")||"")
+}
+}
+return{
+pwd:v,
+path:""
+}
+}
+
+async function probeUrl(u){
+log("probeUrl",u)
 const r=await fetch(u,{cache:"no-store"})
-if(!r.ok)continue
+if(!r.ok){
+log("probeUrl:not ok",r.status,u)
+return false
+}
 const t=await r.text()
-if(!isHTML(t))continue
+const ok=isHTML(t)
+log("probeUrl:isHTML",ok,u)
+return ok
+}
+
+async function tryPathWithPwd(pwd,path,hash){
+const dirs=await fetchList()
+const {path:sub,query}=splitPath(path)
+const map=getDirMap()
+for(const d of dirs){
+const bound=map[d]
+if(bound&&bound!==pwd){
+log("tryPathWithPwd:skip bound dir",d,bound)
+continue
+}
+const base="./main/"+encodeURIComponent(d)+"/"
+const u=base+sub+query
+await setPasswords([pwd])
+try{
+if(await probeUrl(u)){
+bindDirPwd(d,pwd)
 location.href=u+(hash||"")
 return true
-}catch{}
+}
+}catch(e){
+log("tryPathWithPwd:error",d,e)
+}
 }
 return false
 }
 
-async function auto(){
-const q=new URLSearchParams(location.search)
-const pwd=q.get("pwd")
-const path=q.get("path")||q.get("url")
+async function tryPwdTraverse(pwd,hash){
+const dirs=await fetchList()
+const map=getDirMap()
+for(const d of dirs){
+const bound=map[d]
+if(bound&&bound!==pwd){
+log("tryPwdTraverse:skip bound dir",d,bound)
+continue
+}
+const u="./main/"+encodeURIComponent(d)+"/index.html"
+await setPasswords([pwd])
+try{
+if(await probeUrl(u)){
+bindDirPwd(d,pwd)
+location.href=u+(hash||"")
+return true
+}
+}catch(e){
+log("tryPwdTraverse:error",d,e)
+}
+}
+return false
+}
+
+async function run(v){
+const parsed=parseInput(v)
+log("run:parsed",parsed)
+if(!parsed||!parsed.pwd)return
+const pwd=toUnicodeEscape(parsed.pwd)
 const hash=location.hash
-const list=[]
-if(pwd)list.push(toUnicodeEscape(pwd))
-for(const p of getSaved())list.push(p)
-for(const p of list){
-if(await tryOpen(p,path,hash)){if(pwd)savePwd(p);return}
+if(parsed.path){
+await tryPathWithPwd(pwd,parsed.path,hash)
+return
+}
+await tryPwdTraverse(pwd,hash)
+}
+
+async function auto(){
+const raw=location.search
+if(raw){
+$("pwd").value=raw
+log("auto",raw,location.hash)
+await run(raw)
 }
 }
 
 async function go(){
-const v=$("pwd").value
+const v=$("pwd").value.trim()
 if(!v)return
-const u=toUnicodeEscape(v)
-savePwd(u)
-await tryOpen(u,"",location.hash)
+log("go",v)
+await run(v)
 }
 
 $("go").onclick=go
@@ -119,6 +224,5 @@ $("pwd").onkeydown=e=>{if(e.key==="Enter")go()}
 
 auto()
 </script>
-
 </body>
 </html>

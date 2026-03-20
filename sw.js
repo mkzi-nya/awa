@@ -6,6 +6,8 @@ const KEY_PWDS="pwds_unicode"
 
 let cachedPasswords=[]
 
+function log(...a){console.log("[awa-sw]",...a)}
+
 function idbOpen(){
 return new Promise((resolve,reject)=>{
 const req=indexedDB.open(DB_NAME,1)
@@ -46,17 +48,31 @@ self.addEventListener("activate",e=>{
 e.waitUntil((async()=>{
 await self.clients.claim()
 cachedPasswords=await idbGet(KEY_PWDS)||[]
-const cs=await self.clients.matchAll()
-for(const c of cs)c.postMessage({type:"SW_READY"})
+log("activate loaded",cachedPasswords)
 })())
 })
 
-self.addEventListener("message",e=>{
-const d=e.data||{}
+self.addEventListener("message",event=>{
+const d=event.data||{}
+
+if(d.type==="PING"){
+log("PING")
+
+event.waitUntil((async()=>{
+const cs=await self.clients.matchAll()
+for(const c of cs){
+c.postMessage({type:"SW_READY"})
+}
+})())
+
+return
+}
+
 if(d.type==="SET_PASSWORDS"){
 const list=(d.passwords||[]).map(x=>String(x))
 cachedPasswords=list
-e.waitUntil(idbSet(KEY_PWDS,list))
+log("set passwords",list)
+event.waitUntil(idbSet(KEY_PWDS,list))
 }
 })
 
@@ -145,10 +161,13 @@ try{
 const entries=await reader.getEntries()
 if(!entries||!entries.length)return null
 return await entries[0].getData(new zip.Uint8ArrayWriter())
-}finally{await reader.close()}
+}finally{
+await reader.close()
+}
 }
 
 async function fetchAndMaybeDecrypt(req,url){
+log("fetch",url)
 const res=await fetch(url,{method:"GET",headers:req.headers,mode:"same-origin",credentials:req.credentials,cache:"no-store",redirect:"follow"})
 if(!res||!res.ok)return res
 
@@ -157,24 +176,27 @@ try{ab=await res.clone().arrayBuffer()}catch{return res}
 
 if(!cachedPasswords||cachedPasswords.length===0){
 cachedPasswords=await idbGet(KEY_PWDS)||[]
+log("lazy load pwds",cachedPasswords)
 }
 
 for(const pwd of cachedPasswords){
 try{
 const d=await tryDecrypt(ab,pwd)
 if(!d)continue
-
+log("decrypt success",url,pwd)
 const h=new Headers(res.headers)
 h.set("Content-Type",inferContentType(req,new URL(url),d))
 h.delete("Content-Disposition")
 h.delete("Content-Encoding")
 h.delete("Content-Length")
 h.set("Cache-Control","no-store")
-
 return new Response(d,{status:200,headers:h})
-}catch{}
+}catch(e){
+log("decrypt fail",url,pwd,e)
+}
 }
 
+log("no pwd matched",url)
 return res
 }
 
@@ -186,11 +208,15 @@ e.respondWith((async()=>{
 if(req.method!=="GET")return fetch(req)
 const isNav=isNavigationRequest(req)
 if(isNav&&!url.pathname.endsWith("/")&&!hasExtension(url.pathname)){
-const r=new URL(url.href);r.pathname+="/"
+const r=new URL(url.href)
+r.pathname+="/"
+log("redirect add slash",url.href,"->",r.href)
 return Response.redirect(r.href,302)
 }
 if(isNav&&url.pathname.endsWith("/")){
-const r=new URL(url.href);r.pathname+="index.html"
+const r=new URL(url.href)
+r.pathname+="index.html"
+log("nav dir -> index",url.href,"->",r.href)
 return fetchAndMaybeDecrypt(req,r.href)
 }
 return fetchAndMaybeDecrypt(req,url.href)
