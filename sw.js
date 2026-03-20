@@ -57,14 +57,11 @@ const d=event.data||{}
 
 if(d.type==="PING"){
 log("PING")
-
-event.waitUntil((async()=>{
-const cs=await self.clients.matchAll()
+self.clients.matchAll().then(cs=>{
 for(const c of cs){
 c.postMessage({type:"SW_READY"})
 }
-})())
-
+})
 return
 }
 
@@ -72,7 +69,7 @@ if(d.type==="SET_PASSWORDS"){
 const list=(d.passwords||[]).map(x=>String(x))
 cachedPasswords=list
 log("set passwords",list)
-event.waitUntil(idbSet(KEY_PWDS,list))
+idbSet(KEY_PWDS,list)
 }
 })
 
