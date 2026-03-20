@@ -5,23 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>awa</title>
 <style>
-body{
-margin:0;
-height:100vh;
-display:flex;
-align-items:center;
-justify-content:center;
-background:#0b0f14;
-font-family:sans-serif
-}
-input,button{
-padding:10px;
-font-size:14px;
-border-radius:6px;
-border:1px solid #333;
-background:#111;
-color:#eee
-}
+body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0f14;font-family:sans-serif}
+input,button{padding:10px;font-size:14px;border-radius:6px;border:1px solid #333;background:#111;color:#eee}
 button{cursor:pointer}
 </style>
 </head>
@@ -45,18 +30,22 @@ await navigator.serviceWorker.ready
 return r
 }
 
-async function setPassword(p){
-function post(){
-const c=navigator.serviceWorker.controller
-if(!c)return false
-c.postMessage({type:"SET_PASSWORD",password:p})
-return true
+function waitSWReady(){
+return new Promise(r=>{
+if(window.__sw_ready)return r()
+navigator.serviceWorker.addEventListener("message",e=>{
+if(e.data&&e.data.type==="SW_READY"){
+window.__sw_ready=1
+r()
 }
-if(post())return
-await new Promise(r=>{
-navigator.serviceWorker.addEventListener("controllerchange",r,{once:true})
+},{once:true})
 })
-post()
+}
+
+async function setPasswords(list){
+await registerSW()
+await waitSWReady()
+navigator.serviceWorker.controller.postMessage({type:"SET_PASSWORDS",passwords:list})
 }
 
 function isHTML(t){
@@ -69,31 +58,66 @@ const r=await fetch("./main/main.txt",{cache:"no-store"})
 return (await r.text()).split(/\r?\n/).map(s=>s.trim()).filter(Boolean)
 }
 
-async function unlock(p){
-await registerSW()
-await setPassword(p)
+function getSaved(){
+try{return JSON.parse(localStorage.getItem("pwds")||"[]")}catch{return[]}
+}
+
+function savePwd(p){
+let a=getSaved()
+if(!a.includes(p)){a.push(p);localStorage.setItem("pwds",JSON.stringify(a))}
+}
+
+function splitPath(p){
+if(!p)return{path:"",query:""}
+const i=p.indexOf("?")
+if(i===-1)return{path:p,query:""}
+return{path:p.slice(0,i),query:p.slice(i)}
+}
+
+async function tryOpen(p,fullPath,hash){
+await setPasswords([p,...getSaved().filter(x=>x!==p)])
 const dirs=await fetchList()
+const {path,query}=splitPath(fullPath||"")
 for(const d of dirs){
-const u="./main/"+encodeURIComponent(d)+"/index.html"
+const base="./main/"+encodeURIComponent(d)+"/"
+const u=path?base+path+query:base+"index.html"
 try{
 const r=await fetch(u,{cache:"no-store"})
 if(!r.ok)continue
 const t=await r.text()
 if(!isHTML(t))continue
-location.href=u
-return
+location.href=u+(hash||"")
+return true
 }catch{}
+}
+return false
+}
+
+async function auto(){
+const q=new URLSearchParams(location.search)
+const pwd=q.get("pwd")
+const path=q.get("path")||q.get("url")
+const hash=location.hash
+const list=[]
+if(pwd)list.push(toUnicodeEscape(pwd))
+for(const p of getSaved())list.push(p)
+for(const p of list){
+if(await tryOpen(p,path,hash)){if(pwd)savePwd(p);return}
 }
 }
 
 async function go(){
 const v=$("pwd").value
 if(!v)return
-await unlock(toUnicodeEscape(v))
+const u=toUnicodeEscape(v)
+savePwd(u)
+await tryOpen(u,"",location.hash)
 }
 
 $("go").onclick=go
 $("pwd").onkeydown=e=>{if(e.key==="Enter")go()}
+
+auto()
 </script>
 
 </body>
