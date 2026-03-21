@@ -63,19 +63,32 @@ await new Promise(r=>navigator.serviceWorker.addEventListener("controllerchange"
 async function pingSW(){
 await registerSW()
 await ensureController()
-log("pingSW:send")
-await new Promise((resolve,reject)=>{
-const t=setTimeout(()=>reject(new Error("ping timeout")),5000)
+
+log("pingSW:setup listener")
+
+return new Promise((resolve,reject)=>{
+let done=false
+
 const onMsg=e=>{
 if(e.data&&e.data.type==="SW_READY"){
-clearTimeout(t)
+log("pingSW:got SW_READY")
+done=true
 navigator.serviceWorker.removeEventListener("message",onMsg)
-log("pingSW:ready")
 resolve()
 }
 }
+
 navigator.serviceWorker.addEventListener("message",onMsg)
+
+log("pingSW:send")
 navigator.serviceWorker.controller.postMessage({type:"PING"})
+
+setTimeout(()=>{
+if(done)return
+navigator.serviceWorker.removeEventListener("message",onMsg)
+console.warn("ping timeout → continue")
+resolve()
+},2000)
 })
 }
 
